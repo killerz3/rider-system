@@ -8,7 +8,7 @@ A small Go API registers riders through location updates, resolves pickup/drop c
 docker compose up --build
 ```
 
-Compose was written but **not executed in the build environment**. Please verify `docker compose up --build` yourself. It enables Redis AOF and named volumes for Redis and SQLite.
+The Docker daemon itself was not available in the build environment, so `docker compose up --build` was not run directly. As a substitute, the exact build command from the Dockerfile was reproduced by hand and the resulting binary was run through the full API flow against real Redis — all passed (see [VERIFICATION.md](VERIFICATION.md)). What's genuinely unverified is Docker/Compose-specific (inter-container DNS, the healthcheck gate, volume permissions) — please still run `docker compose up --build` yourself before relying on it. It enables Redis AOF and named volumes for Redis and SQLite.
 
 For the local path used during verification, install Go 1.23.4 or compatible, GCC/CGO (for h3-go), Redis, and curl. The walkthrough also uses Python 3 to extract the assignment ID.
 
