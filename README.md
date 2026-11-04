@@ -63,4 +63,4 @@ Candidate search is bounded to an H3 neighborhood and uses a snapshot: it does n
 
 This demo was built with AI assistance: Claude coordinated Codex implementation and verification passes. Roughly 30 minutes of direct human involvement was the intended level of involvement, not a measured duration. The scope required an independent implementation, with an existing system allowed as broad conceptual inspiration only. See the [prompt history](docs/prompts.md) for the process and prompts (assembled separately by the coordinator).
 
-Read the [offline project guide](docs/index.html) for the design discussion, API contracts, diagrams, and review path.
+Read the [offline project guide](docs/index.html) for the design discussion, API contracts, diagrams, and review path — also hosted at https://folio.kz3.dev/p/rider-dispatch.
