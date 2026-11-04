@@ -1,0 +1,29 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      REDIS_ADDR: redis:6379
+      HTTP_PORT: "8080"
+      H3_RESOLUTION: "7"
+      GRID_DISTANCE: "2"
+      SQLITE_PATH: /data/riders.db
+    volumes:
+      - sqlite-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+  redis:
+    image: redis:7.4-bookworm
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  sqlite-data:
+  redis-data:

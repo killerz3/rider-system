@@ -1,0 +1,7 @@
+/rider-system
+*.db
+*.db-shm
+*.db-wal
+*.test
+*.out
+.verification-smoke/

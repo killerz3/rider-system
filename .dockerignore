@@ -1,0 +1,5 @@
+.git
+*.db*
+rider-system
+docs
+NOTES-impl.md
