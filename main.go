@@ -252,23 +252,121 @@ func (s *server) assign(w http.ResponseWriter, r *http.Request) {
 		backend(w, e)
 		return
 	}
-	cells, e := h3.GridDisk(pickupCell, s.cfg.GridDistance)
+	rings, e := h3.GridDiskDistances(pickupCell, s.cfg.GridDistance)
 	if e != nil {
 		backend(w, e)
 		return
 	}
+	b := make([]byte, 16)
+	if _, e = rand.Read(b); e != nil {
+		backend(w, e)
+		return
+	}
+	id := hex.EncodeToString(b)
+	// claim reports whether a response was written: claimed, replayed, conflict or backend error.
+	claim := func(riderID string) bool {
+		a := assignment{ID: id, OrderID: in.OrderID, RiderID: riderID, Pickup: p, Drop: d, PickupCell: pc, DropCell: dc, Status: "active", CreatedAt: now()}
+		record, _ := json.Marshal(a)
+		riderKey := prefix + "rider:" + riderID
+		if riderID == "" {
+			riderKey = prefix + "no-candidate:" + id
+		}
+		result, err := claimScript.Run(ctx, s.redis, []string{orderKey, riderKey, prefix + "assignment:" + id}, prefix, payload, id, string(record), a.CreatedAt, riderID).StringSlice()
+		if err != nil {
+			backend(w, err)
+			return true
+		}
+		switch result[0] {
+		case "conflict":
+			fail(w, 409, "order_payload_conflict", "order already has an assignment with different coordinates")
+			return true
+		case "existing":
+			s.finishResponse(ctx, w, result[1], 200)
+			return true
+		case "claimed":
+			s.finishResponse(ctx, w, result[1], 201)
+			return true
+		}
+		return false
+	}
+	// If every candidate of a round is claimed concurrently, keep expanding from the next ring.
+	for next := 0; next < len(rings); {
+		candidates, last, err := s.search(ctx, rings, next, p)
+		if err != nil {
+			backend(w, err)
+			return
+		}
+		for _, c := range candidates {
+			if claim(c.id) {
+				return
+			}
+		}
+		next = last + 1
+	}
+	// An empty candidate still runs the order check to catch concurrent duplicates with no candidates.
+	if claim("") {
+		return
+	}
+	fail(w, 409, "no_rider_available", "no available rider in the pickup search area")
+}
+
+type candidate struct {
+	id       string
+	distance float64
+}
+
+// search returns available riders sorted by distance, starting at ring `from`, and the last ring read.
+// Rounds mode reads one ring per SUNION and stops one ring after the first ring with an available
+// rider: a rider just past that ring can be closer to pickup than one at its far side.
+// Disk mode reads every remaining ring in a single SUNION.
+func (s *server) search(ctx context.Context, rings [][]h3.Cell, from int, p point) ([]candidate, int, error) {
+	last := len(rings) - 1
+	var found []candidate
+	if s.cfg.SearchMode == "disk" {
+		var cells []h3.Cell
+		for _, ring := range rings[from:] {
+			cells = append(cells, ring...)
+		}
+		c, err := s.available(ctx, cells, p)
+		if err != nil {
+			return nil, 0, err
+		}
+		found = c
+	} else {
+		hit := -1
+		for k := from; k <= last; k++ {
+			c, err := s.available(ctx, rings[k], p)
+			if err != nil {
+				return nil, 0, err
+			}
+			found = append(found, c...)
+			if hit < 0 && len(found) > 0 {
+				hit = k
+			}
+			if hit >= 0 && k > hit {
+				last = k
+				break
+			}
+		}
+	}
+	sort.Slice(found, func(i, j int) bool {
+		if found[i].distance == found[j].distance {
+			return found[i].id < found[j].id
+		}
+		return found[i].distance < found[j].distance
+	})
+	return found, last, nil
+}
+
+// available unions the cells' rider sets and keeps available riders with their distance to p.
+func (s *server) available(ctx context.Context, cells []h3.Cell, p point) ([]candidate, error) {
 	keys := make([]string, 0, len(cells))
 	for _, cell := range cells {
 		keys = append(keys, prefix+"cell:"+cell.String())
 	}
 	ids, e := s.redis.SUnion(ctx, keys...).Result()
 	if e != nil {
-		backend(w, e)
-		return
-	}
-	type candidate struct {
-		id       string
-		distance float64
+		return nil, e
 	}
 	candidates := []candidate{}
 	for _, id := range ids {
@@ -277,52 +375,13 @@ func (s *server) assign(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err != nil {
-			backend(w, err)
-			return
+			return nil, err
 		}
 		if v.Available {
 			candidates = append(candidates, candidate{id, distance(point{v.Latitude, v.Longitude}, p)})
 		}
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].distance == candidates[j].distance {
-			return candidates[i].id < candidates[j].id
-		}
-		return candidates[i].distance < candidates[j].distance
-	})
-	b := make([]byte, 16)
-	if _, e = rand.Read(b); e != nil {
-		backend(w, e)
-		return
-	}
-	id := hex.EncodeToString(b)
-	// An empty candidate still runs the order check to catch concurrent duplicates with no candidates.
-	candidates = append(candidates, candidate{id: ""})
-	for _, candidate := range candidates {
-		a := assignment{ID: id, OrderID: in.OrderID, RiderID: candidate.id, Pickup: p, Drop: d, PickupCell: pc, DropCell: dc, Status: "active", CreatedAt: now()}
-		record, _ := json.Marshal(a)
-		riderKey := prefix + "rider:" + candidate.id
-		if candidate.id == "" {
-			riderKey = prefix + "no-candidate:" + id
-		}
-		result, err := claimScript.Run(ctx, s.redis, []string{orderKey, riderKey, prefix + "assignment:" + id}, prefix, payload, id, string(record), a.CreatedAt, candidate.id).StringSlice()
-		if err != nil {
-			backend(w, err)
-			return
-		}
-		switch result[0] {
-		case "conflict":
-			fail(w, 409, "order_payload_conflict", "order already has an assignment with different coordinates")
-			return
-		case "existing":
-			s.finishResponse(ctx, w, result[1], 200)
-			return
-		case "claimed":
-			s.finishResponse(ctx, w, result[1], 201)
-			return
-		}
-	}
-	fail(w, 409, "no_rider_available", "no available rider in the pickup search area")
+	return candidates, nil
 }
 func (s *server) complete(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()

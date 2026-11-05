@@ -8,6 +8,7 @@ services:
       HTTP_PORT: "8080"
       H3_RESOLUTION: "7"
       GRID_DISTANCE: "2"
+      SEARCH_MODE: rounds
       SQLITE_PATH: /data/riders.db
     volumes:
       - sqlite-data:/data

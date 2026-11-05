@@ -52,14 +52,15 @@ These commands passed in the verification pass. Tests require an empty `dispatch
 | `REDIS_ADDR` | `localhost:6379` | Redis address; API uses database 0 |
 | `HTTP_PORT` | `8080` | HTTP listening port |
 | `H3_RESOLUTION` | `7` | Integer 0–15 |
-| `GRID_DISTANCE` | `2` | H3 grid distance, integer 0–20 |
+| `GRID_DISTANCE` | `2` | Maximum H3 grid distance (rings) searched, integer 0–20 |
+| `SEARCH_MODE` | `rounds` | `rounds` expands ring by ring; `disk` unions every cell within `GRID_DISTANCE` in one lookup |
 | `SQLITE_PATH` | `riders.db` | SQLite file; tables created automatically |
 
 ## Design and limits
 
-H3 maps locations to cells. Redis maps cells to rider IDs and each rider back to its cell, allowing atomic membership changes. Assignment lookup unions cells within `GRID_DISTANCE`, filters available riders, and ranks by haversine distance with rider ID as a tie break. Lua checks availability and order idempotency atomically.
+H3 maps locations to cells. Redis maps cells to rider IDs and each rider back to its cell, allowing atomic membership changes. Assignment lookup searches outward in rounds: round 0 is the pickup cell, round k the ring of cells exactly k steps away (`GridDiskDistances`), one `SUNION` per round, up to `GRID_DISTANCE`. Once a round finds an available rider, one more ring is read before claiming, because a rider just past that ring's edge can be closer to pickup than one at its far side. Candidates are ranked by haversine distance with rider ID as a tie break. If every candidate is claimed concurrently, the search continues from the next unread ring. Busy areas resolve in one or two cheap lookups; sparse areas pay a few extra Redis round trips. `SEARCH_MODE=disk` keeps the original single-union search over the whole disk. Lua checks availability and order idempotency atomically.
 
-Candidate search is bounded to an H3 neighborhood and uses a snapshot: it does not guarantee the globally nearest rider or recheck position at claim time. Redis is a single instance (no Cluster support). There is no authentication, location expiry, routing, ETA, or Redis rehydration from SQLite after data loss. Cell sets retain busy riders; availability is filtered separately. Keys and assignment history have no TTL. SQLite write ordering assumes one API process. Redis and SQLite have no shared transaction: a 503 can follow a successful Redis mutation. Health checks Redis only.
+Candidate search is bounded to an H3 neighborhood and uses a snapshot; the one-ring lookahead is a heuristic, not an exact nearest guarantee across rings: it does not guarantee the globally nearest rider or recheck position at claim time. Redis is a single instance (no Cluster support). There is no authentication, location expiry, routing, ETA, or Redis rehydration from SQLite after data loss. Cell sets retain busy riders; availability is filtered separately. Keys and assignment history have no TTL. SQLite write ordering assumes one API process. Redis and SQLite have no shared transaction: a 503 can follow a successful Redis mutation. Health checks Redis only.
 
 This demo was built with AI assistance: Claude coordinated Codex implementation and verification passes. Roughly 30 minutes of direct human involvement was the intended level of involvement, not a measured duration. The scope required an independent implementation, with an existing system allowed as broad conceptual inspiration only. See the [prompt history](docs/prompts.md) for the process and prompts (assembled separately by the coordinator).
 

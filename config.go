@@ -11,8 +11,8 @@ const defaultH3Resolution = 7
 const operationTimeout = 3 * time.Second
 
 type config struct {
-	RedisAddr, HTTPPort, SQLitePath string
-	H3Resolution, GridDistance      int
+	RedisAddr, HTTPPort, SQLitePath, SearchMode string
+	H3Resolution, GridDistance                  int
 }
 
 func env(key, fallback string) string {
@@ -31,6 +31,10 @@ func loadConfig() (config, error) {
 	c.GridDistance, err = strconv.Atoi(env("GRID_DISTANCE", "2"))
 	if err != nil || c.GridDistance < 0 || c.GridDistance > 20 {
 		return c, fmt.Errorf("GRID_DISTANCE must be 0..20")
+	}
+	c.SearchMode = env("SEARCH_MODE", "rounds")
+	if c.SearchMode != "rounds" && c.SearchMode != "disk" {
+		return c, fmt.Errorf("SEARCH_MODE must be rounds or disk")
 	}
 	return c, nil
 }

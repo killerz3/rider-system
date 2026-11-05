@@ -154,3 +154,15 @@ redis-cli -h 127.0.0.1 -p 6379 DEL dispatch:rider:verification-smoke-r1 dispatch
 ```
 
 The smoke SQLite database and any WAL/SHM sidecars were removed after the server exited. No commits were made.
+
+## Follow-up: round-based search
+
+Assignment search now expands ring by ring (`SEARCH_MODE=rounds`, default) with a one-ring lookahead; `SEARCH_MODE=disk` keeps the original single union. `rounds_test.go` adds, each run in both modes against live Redis:
+
+| Scenario | Expected | Actual result |
+|---|---|---|
+| Rider in pickup cell | Rounds mode stops after ring 1; disk reads ring 2 | PASS |
+| Outer-ring reach | Ring-3 rider gives 409 at `GRID_DISTANCE=2`; ring-2 rider is claimed | PASS |
+| Next-ring lookahead | Rider just across the pickup cell edge beats one at its far side | PASS |
+
+`go vet ./...` and `REDIS_ADDR=127.0.0.1:6379 go test ./... -race -count=1` passed, including all earlier tests. As a mutation check, removing the lookahead (stopping at the first ring with a hit) made the first and third tests fail in rounds mode.
